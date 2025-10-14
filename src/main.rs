@@ -49,8 +49,8 @@ fn get_shell_input() -> Vec<String> {
     parts
 }
 #[inline(always)]
-fn files_in_folder(path: &str) -> fs::ReadDir {
-    fs::read_dir(path).unwrap()
+fn files_in_folder(path: &str) -> Option<fs::ReadDir> {
+    fs::read_dir(path).ok()
 }
 fn substatue(st: String) -> String {
     let mut s = st;
@@ -106,15 +106,21 @@ fn command_run(command: Vec<String>) {
             let binding = env::var_os("PATH").unwrap();
             let paths = env::split_paths(&binding);
             for path in paths {
-                for file in files_in_folder(path.clone().to_str().unwrap()) {
-                    if *file.as_ref().unwrap().file_name() == *name {
-                        Command::new(file.unwrap().path())
-                            .args(tmp.clone().map(substatue))
-                            .spawn()
-                            .unwrap()
-                            .wait()
-                            .unwrap();
-                        return;
+                let resulting = files_in_folder(path.clone().to_str().unwrap());
+                if let Some(resulting) = resulting {
+                    for file in resulting {
+                        if *file.as_ref().unwrap().file_name() == *name {
+                            // check if file is a executable
+                            if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
+                                Command::new(file.unwrap().path())
+                                    .args(tmp.clone().map(substatue))
+                                    .spawn()
+                                    .unwrap()
+                                    .wait()
+                                    .unwrap();
+                                return;
+                            }
+                        }
                     }
                 }
             }
