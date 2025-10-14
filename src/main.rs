@@ -11,12 +11,15 @@ fn get_shell_input() -> Vec<String> {
     stdin.read_line(&mut buffer).unwrap();
     let mut parts: Vec<String> = Vec::new();
     let mut quoted = false;
+    let mut singlequoted = false;
     let mut cur = String::new();
     let mut endedcur = false;
     for i in buffer.chars() {
         match i {
             '"' => {
-                if quoted {
+                if singlequoted {
+                    cur.push(i);
+                } else if quoted {
                     quoted = false;
                     parts.push(cur);
                     cur = String::new();
@@ -39,6 +42,25 @@ fn get_shell_input() -> Vec<String> {
                 parts.push(cur);
 
                 break;
+            }
+            '#' => {
+                if quoted {
+                    cur.push(i);
+                } else {
+                    break;
+                }
+            }
+            '\'' => {
+                if quoted {
+                    cur.push(i)
+                } else if singlequoted {
+                    singlequoted = false;
+                    parts.push(cur);
+                    cur = String::new();
+                    endedcur = true;
+                } else {
+                    singlequoted = true;
+                }
             }
             _ => {
                 cur.push(i);
