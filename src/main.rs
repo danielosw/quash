@@ -14,56 +14,80 @@ fn get_shell_input() -> Vec<String> {
     let mut singlequoted = false;
     let mut cur = String::new();
     let mut endedcur = false;
+    let mut piping = false;
     for i in buffer.chars() {
-        match i {
-            '"' => {
-                if singlequoted {
-                    cur.push(i);
-                } else if quoted {
-                    quoted = false;
-                    parts.push(cur);
-                    cur = String::new();
-                    endedcur = true;
-                } else {
-                    quoted = true;
+        if !piping {
+            match i {
+                '"' => {
+                    if singlequoted {
+                        cur.push(i);
+                    } else if quoted {
+                        quoted = false;
+                        parts.push(cur);
+                        cur = String::new();
+                        endedcur = true;
+                    } else {
+                        quoted = true;
+                    }
                 }
-            }
-            ' ' => {
-                if quoted {
-                    cur.push(i);
-                } else if !endedcur {
-                    parts.push(cur);
-                    cur = String::new();
-                } else {
-                    endedcur = false;
+                ' ' => {
+                    if quoted {
+                        cur.push(i);
+                    } else if !endedcur {
+                        parts.push(cur);
+                        cur = String::new();
+                    } else {
+                        endedcur = false;
+                    }
                 }
-            }
-            '\n' => {
-                parts.push(cur);
+                '\n' => {
+                    parts.push(cur);
 
-                break;
-            }
-            '#' => {
-                if quoted {
-                    cur.push(i);
-                } else {
                     break;
                 }
-            }
-            '\'' => {
-                if quoted {
-                    cur.push(i)
-                } else if singlequoted {
-                    singlequoted = false;
-                    parts.push(cur);
-                    cur = String::new();
-                    endedcur = true;
-                } else {
-                    singlequoted = true;
+                '#' => {
+                    if quoted {
+                        cur.push(i);
+                    } else {
+                        break;
+                    }
+                }
+                '\'' => {
+                    if quoted {
+                        cur.push(i)
+                    } else if singlequoted {
+                        singlequoted = false;
+                        parts.push(cur);
+                        cur = String::new();
+                        endedcur = true;
+                    } else {
+                        singlequoted = true;
+                    }
+                }
+                '|' => {
+                    if !quoted {
+                        //if we have a pipe we make the rest one big command
+                        cur.push(i);
+                        parts.push(cur);
+                        cur = String::new();
+                        piping = true;
+                    } else {
+                        cur.push(i);
+                    }
+                }
+                _ => {
+                    cur.push(i);
                 }
             }
-            _ => {
-                cur.push(i);
+        } else {
+            match i != '\n' {
+                true => {
+                    cur.push(i);
+                }
+                false => {
+                    parts.push(cur);
+                    break;
+                }
             }
         }
     }
@@ -123,6 +147,7 @@ fn command_run(command: Vec<String>) {
         "pwd" => {
             println!("{}", env::current_dir().unwrap().to_str().unwrap());
         }
+        "|" => {}
         _ => {
             let name = g;
             let binding = env::var_os("PATH").unwrap();
