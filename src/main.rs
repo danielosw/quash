@@ -241,7 +241,12 @@ fn command_run(command: Vec<String>) {
             println!("{}", env::current_dir().unwrap().to_str().unwrap());
         }
         _ => {
-            run_proccess(tmp, g, false, "".to_string());
+            // check if we are piping
+            if !pipe {
+                run_proccess(tmp, g, false, "".to_string());
+            } else {
+                // we are piping so
+            }
         }
     }
 }
