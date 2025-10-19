@@ -1,17 +1,23 @@
 use std::{
     env, fs,
     io::{self, Write},
+    os::unix::process,
     process::{Command, Stdio},
 };
-fn get_shell_input() -> Vec<String> {
+fn get_shell_input() -> String {
     print!("[QUASH]$ ");
     io::stdout().flush().unwrap();
     let mut buffer = String::new();
     let stdin = io::stdin();
     stdin.read_line(&mut buffer).unwrap();
+    return buffer;
+}
+
+fn process_shell(buffer: String) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut quoted = false;
     let mut singlequoted = false;
+    let mut doublequoted = false;
     let mut cur = String::new();
     let mut endedcur = false;
     let mut piping = false;
@@ -21,13 +27,15 @@ fn get_shell_input() -> Vec<String> {
                 '"' => {
                     if singlequoted {
                         cur.push(i);
-                    } else if quoted {
+                    } else if doublequoted {
                         quoted = false;
+                        doublequoted = false;
                         parts.push(cur);
                         cur = String::new();
                         endedcur = true;
                     } else {
                         quoted = true;
+                        doublequoted = true;
                     }
                 }
                 ' ' => {
@@ -41,7 +49,7 @@ fn get_shell_input() -> Vec<String> {
                     }
                 }
                 '\n' => {
-                    parts.push(cur);
+                    parts.push(cur.clone());
 
                     break;
                 }
@@ -53,15 +61,17 @@ fn get_shell_input() -> Vec<String> {
                     }
                 }
                 '\'' => {
-                    if quoted {
+                    if doublequoted {
                         cur.push(i)
                     } else if singlequoted {
                         singlequoted = false;
+                        quoted = false;
                         parts.push(cur);
                         cur = String::new();
                         endedcur = true;
                     } else {
                         singlequoted = true;
+                        quoted = true;
                     }
                 }
                 '|' => {
@@ -85,18 +95,61 @@ fn get_shell_input() -> Vec<String> {
                     cur.push(i);
                 }
                 false => {
-                    parts.push(cur);
+                    parts.push(cur.clone());
                     break;
                 }
             }
         }
     }
-
+    // if their is nothing in parts but something in cur push it to parts
+    if (parts.len() == 0 && cur.len() != 0) {
+        parts.push(cur);
+    }
     parts
 }
 #[inline(always)]
 fn files_in_folder(path: &str) -> Option<fs::ReadDir> {
     fs::read_dir(path).ok()
+}
+fn run_proccess(tmp: std::vec::IntoIter<String>, g: String, pipe: bool, stdiner: String) {
+    let name = g;
+    let binding = env::var_os("PATH").unwrap();
+    let paths = env::split_paths(&binding);
+    for path in paths {
+        let resulting = files_in_folder(path.clone().to_str().unwrap());
+        if let Some(resulting) = resulting {
+            for file in resulting {
+                if *file.as_ref().unwrap().file_name() == *name {
+                    // check if file is a executable
+                    if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
+                        // finally are we piping
+                        if !pipe {
+                            Command::new(file.unwrap().path())
+                                .args(tmp.clone().map(substatue))
+                                .spawn()
+                                .unwrap()
+                                .wait()
+                                .unwrap();
+                        } else {
+                            let mut process = Command::new(file.unwrap().path())
+                                .args(tmp.clone().map(substatue))
+                                .stdin(Stdio::piped())
+                                .spawn()
+                                .unwrap();
+                            process
+                                .stdin
+                                .as_ref()
+                                .unwrap()
+                                .write_all(stdiner.as_bytes())
+                                .unwrap();
+                            process.wait().unwrap();
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
 }
 fn substatue(st: String) -> String {
     let mut s = st;
@@ -113,7 +166,13 @@ fn substatue(st: String) -> String {
     }
 }
 fn command_run(command: Vec<String>) {
-    let mut tmp = command.into_iter();
+    let mut tmp: std::vec::IntoIter<String> = command.into_iter();
+
+    let mut pipe = false;
+    let tempvec: Vec<String> = tmp.clone().collect();
+    if tempvec.contains(&"|".to_string()) {
+        pipe = true;
+    }
     let i = tmp.next().unwrap();
     let g = i.clone();
     match g.as_str() {
@@ -121,8 +180,33 @@ fn command_run(command: Vec<String>) {
             std::process::exit(0);
         }
         "echo" => {
-            for j in tmp {
-                print!("{} ", substatue(j))
+            // if thier is no pipe or redirect print the strings
+            if !pipe {
+                for j in tmp {
+                    print!("{} ", substatue(j))
+                }
+            } else {
+                // im doing this synconislly for conviniance
+
+                // create a buffer
+                let mut buf = String::new();
+                let mut flag = false;
+                // until we find a pipe write the strings to the buffer
+                for j in tmp {
+                    if (j == "|") | flag {
+                        // dumb hack
+                        if flag {
+                            // the only time in this that something actually uses stdin is if its a program, so I am making that assumtion
+                            let pipeto = process_shell(j);
+                            run_proccess(pipeto.clone().into_iter(), pipeto[0].clone(), true, buf);
+                            return;
+                        } else {
+                            flag = true;
+                        }
+                    } else {
+                        buf.push_str(&j);
+                    }
+                }
             }
             println!();
         }
@@ -147,35 +231,13 @@ fn command_run(command: Vec<String>) {
         "pwd" => {
             println!("{}", env::current_dir().unwrap().to_str().unwrap());
         }
-        "|" => {}
         _ => {
-            let name = g;
-            let binding = env::var_os("PATH").unwrap();
-            let paths = env::split_paths(&binding);
-            for path in paths {
-                let resulting = files_in_folder(path.clone().to_str().unwrap());
-                if let Some(resulting) = resulting {
-                    for file in resulting {
-                        if *file.as_ref().unwrap().file_name() == *name {
-                            // check if file is a executable
-                            if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
-                                Command::new(file.unwrap().path())
-                                    .args(tmp.clone().map(substatue))
-                                    .spawn()
-                                    .unwrap()
-                                    .wait()
-                                    .unwrap();
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
+            run_proccess(tmp, g, false, "".to_string());
         }
     }
 }
 fn main() {
     loop {
-        command_run(get_shell_input());
+        command_run(process_shell(get_shell_input()));
     }
 }
