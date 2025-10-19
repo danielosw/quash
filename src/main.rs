@@ -41,7 +41,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                 ' ' => {
                     if quoted {
                         cur.push(i);
-                    } else if !endedcur {
+                    } else if !endedcur && cur.clone().len() != 0 {
                         parts.push(cur);
                         cur = String::new();
                     } else {
@@ -77,10 +77,17 @@ fn process_shell(buffer: String) -> Vec<String> {
                 '|' => {
                     if !quoted {
                         //if we have a pipe we make the rest one big command
+                        // if we are in a cur push it so pipes dont break
+                        if (cur.clone().len() != 0) {
+                            parts.push(cur);
+                            cur = String::new();
+                        }
                         cur.push(i);
                         parts.push(cur);
                         cur = String::new();
                         piping = true;
+                        // prevent a space from being consumed
+                        endedcur = true;
                     } else {
                         cur.push(i);
                     }
@@ -197,8 +204,10 @@ fn command_run(command: Vec<String>) {
                         // dumb hack
                         if flag {
                             // the only time in this that something actually uses stdin is if its a program, so I am making that assumtion
-                            let pipeto = process_shell(j);
-                            run_proccess(pipeto.clone().into_iter(), pipeto[0].clone(), true, buf);
+                            let mut pipeto = process_shell(j);
+                            let g2 = pipeto[0].clone();
+                            pipeto.remove(0);
+                            run_proccess(pipeto.into_iter(), g2, true, buf);
                             return;
                         } else {
                             flag = true;
