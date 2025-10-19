@@ -213,7 +213,7 @@ fn command_run(command: Vec<String>) {
                             flag = true;
                         }
                     } else {
-                        buf.push_str(&j);
+                        buf.push_str(&substatue(j));
                     }
                 }
             }
