@@ -2,12 +2,13 @@ use std::{
     env, fs,
     io::{self, Read, Write},
     process::{Command, Stdio},
-    thread,
+    thread, vec,
 };
 struct Job {
     id: i64,
     command: Vec<String>,
     finished: bool,
+    pid: u32,
 }
 struct JobHandler {
     jobs: Vec<Job>,
@@ -15,10 +16,16 @@ struct JobHandler {
 }
 impl Job {
     fn spawn_job(&'static mut self) {
-        thread::spawn(|| {
-            command_run(self.command.clone());
-            self.finished = true;
+        let g = self.command.clone()[0].clone();
+        let mut tmp = self.command.clone();
+        tmp.remove(0);
+        let mut job = make_procces_job(tmp.into_iter(), g);
+        self.pid = job.id();
+        // shoot to another thread
+        thread::spawn(move || {
+            job.wait().unwrap();
         });
+        self.finished = true;
     }
 }
 impl JobHandler {
@@ -42,22 +49,26 @@ impl JobHandler {
         }
         None
     }
+    fn get_pid_by_id(&self, id: i64) -> u32 {
+        self.get_job_by_id(id).unwrap().pid
+    }
     fn get_id_by_index(&self, index: usize) -> i64 {
         self.jobs[index].id
     }
-    fn create_job(&'static mut self, command: Vec<String>) -> i64 {
+    fn create_job(mut self, command: Vec<String>) -> i64 {
         // create the new job
         let new_job = Job {
             id: self.id,
             command,
             finished: false,
+            pid: 0,
         };
         self.id += 1;
         let id = new_job.id;
         self.jobs.insert(self.jobs.len(), new_job);
-        self.start_job(id);
         id
     }
+    fn end_job(&self, id: i64) {}
     fn start_job(&'static mut self, id: i64) {
         let job_index = self.get_index_by_id(id);
         self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()].spawn_job();
@@ -177,7 +188,7 @@ fn process_shell(buffer: String) -> Vec<String> {
 fn files_in_folder(path: &str) -> Option<fs::ReadDir> {
     fs::read_dir(path).ok()
 }
-fn run_proccess(tmp: std::vec::IntoIter<String>, g: String, pipe: bool, stdiner: String) {
+fn run_proccess(tmp: vec::IntoIter<String>, g: String, pipe: bool, stdiner: String) {
     let name = g;
     let binding = env::var_os("PATH").unwrap();
     let paths = env::split_paths(&binding);
@@ -231,7 +242,32 @@ fn substatue(st: String) -> String {
         h.join("/")
     }
 }
-fn command_pipe_handler(tmp: std::vec::IntoIter<String>, g: String) -> String {
+fn make_procces_job(tmp: vec::IntoIter<String>, g: String) -> std::process::Child {
+    let name = g;
+    let binding = env::var_os("PATH").unwrap();
+    let paths = env::split_paths(&binding);
+    for path in paths {
+        let resulting = files_in_folder(path.clone().to_str().unwrap());
+        if let Some(resulting) = resulting {
+            for file in resulting {
+                if *file.as_ref().unwrap().file_name() == *name {
+                    // check if file is a executable
+                    if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
+                        let mut process = Command::new(file.unwrap().path())
+                            .args(tmp.clone().map(substatue))
+                            .spawn()
+                            .unwrap();
+
+                        return process;
+                    }
+                }
+            }
+        }
+    }
+
+    unreachable!("failed to make process")
+}
+fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
     let name = g;
     let binding = env::var_os("PATH").unwrap();
     let paths = env::split_paths(&binding);
@@ -267,7 +303,7 @@ fn command_pipe_handler(tmp: std::vec::IntoIter<String>, g: String) -> String {
 }
 
 fn command_run(command: Vec<String>) {
-    let mut tmp: std::vec::IntoIter<String> = command.into_iter();
+    let mut tmp: vec::IntoIter<String> = command.into_iter();
 
     let mut pipe = false;
     let mut job = false;
