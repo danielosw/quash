@@ -1,9 +1,68 @@
 use std::{
     env, fs,
     io::{self, Read, Write},
-    os::unix::process,
     process::{Command, Stdio},
+    thread,
 };
+struct Job {
+    id: i64,
+    command: Vec<String>,
+    finished: bool,
+}
+struct JobHandler {
+    jobs: Vec<Job>,
+    id: i64,
+}
+impl Job {
+    fn spawn_job(&'static mut self) {
+        thread::spawn(|| {
+            command_run(self.command.clone());
+            self.finished = true;
+        });
+    }
+}
+impl JobHandler {
+    fn get_job_by_id(&self, id: i64) -> Option<&Job> {
+        let jobs = self.jobs.iter().clone();
+        for i in jobs {
+            if i.id == id {
+                return Some(i);
+            }
+        }
+        None
+    }
+    fn get_index_by_id(&self, id: i64) -> Option<i64> {
+        let mut counter = 0;
+        for i in self.jobs.iter().clone() {
+            if i.id == id {
+                return Some(counter);
+            } else {
+                counter += 1;
+            }
+        }
+        None
+    }
+    fn get_id_by_index(&self, index: usize) -> i64 {
+        self.jobs[index].id
+    }
+    fn create_job(&'static mut self, command: Vec<String>) -> i64 {
+        // create the new job
+        let new_job = Job {
+            id: self.id,
+            command,
+            finished: false,
+        };
+        self.id += 1;
+        let id = new_job.id;
+        self.jobs.insert(self.jobs.len(), new_job);
+        self.start_job(id);
+        id
+    }
+    fn start_job(&'static mut self, id: i64) {
+        let job_index = self.get_index_by_id(id);
+        self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()].spawn_job();
+    }
+}
 fn get_shell_input() -> String {
     print!("[QUASH]$ ");
     io::stdout().flush().unwrap();
@@ -211,6 +270,7 @@ fn command_run(command: Vec<String>) {
     let mut tmp: std::vec::IntoIter<String> = command.into_iter();
 
     let mut pipe = false;
+    let mut job = false;
     let tempvec: Vec<String> = tmp.clone().collect();
     if tempvec.contains(&"|".to_string()) {
         pipe = true;
