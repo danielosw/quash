@@ -1,0 +1,3 @@
+Install cargo 1.90.0, it will probobly work on other versions but thats what I have it set to
+then while in this folder just run cargo run.
+I made this on linux so it should work on the lab machines, but it will not work on windows with it going through something like wsl due to how I handled envirnement valariables
