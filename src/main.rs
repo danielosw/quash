@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     os::unix::process,
     process::{Command, Stdio},
 };
@@ -10,7 +10,7 @@ fn get_shell_input() -> String {
     let mut buffer = String::new();
     let stdin = io::stdin();
     stdin.read_line(&mut buffer).unwrap();
-    return buffer;
+    buffer
 }
 
 fn process_shell(buffer: String) -> Vec<String> {
@@ -41,7 +41,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                 ' ' => {
                     if quoted {
                         cur.push(i);
-                    } else if !endedcur && cur.clone().len() != 0 {
+                    } else if !endedcur && !cur.clone().is_empty() {
                         parts.push(cur);
                         cur = String::new();
                     } else {
@@ -78,7 +78,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                     if !quoted {
                         //if we have a pipe we make the rest one big command
                         // if we are in a cur push it so pipes dont break
-                        if (cur.clone().len() != 0) {
+                        if !cur.clone().is_empty() {
                             parts.push(cur);
                             cur = String::new();
                         }
@@ -109,7 +109,7 @@ fn process_shell(buffer: String) -> Vec<String> {
         }
     }
     // if their is nothing in parts but something in cur push it to parts
-    if (parts.len() == 0 && cur.len() != 0) {
+    if parts.is_empty() && !cur.is_empty() {
         parts.push(cur);
     }
     parts
@@ -172,6 +172,41 @@ fn substatue(st: String) -> String {
         h.join("/")
     }
 }
+fn command_pipe_handler(tmp: std::vec::IntoIter<String>, g: String) -> String {
+    let name = g;
+    let binding = env::var_os("PATH").unwrap();
+    let paths = env::split_paths(&binding);
+    let mut buffer = String::new();
+    for path in paths {
+        let resulting = files_in_folder(path.clone().to_str().unwrap());
+        if let Some(resulting) = resulting {
+            for file in resulting {
+                if *file.as_ref().unwrap().file_name() == *name {
+                    // check if file is a executable
+                    if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
+                        // finally are we piping
+                        let mut process = Command::new(file.unwrap().path())
+                            .args(tmp.clone().map(substatue))
+                            .stdout(Stdio::piped())
+                            .spawn()
+                            .unwrap();
+                        process
+                            .stdout
+                            .as_mut()
+                            .unwrap()
+                            .read_to_string(&mut buffer)
+                            .unwrap();
+                        process.wait().unwrap();
+                        return buffer;
+                    }
+                }
+            }
+        }
+    }
+
+    return buffer;
+}
+
 fn command_run(command: Vec<String>) {
     let mut tmp: std::vec::IntoIter<String> = command.into_iter();
 
@@ -246,6 +281,28 @@ fn command_run(command: Vec<String>) {
                 run_proccess(tmp, g, false, "".to_string());
             } else {
                 // we are piping so
+
+                // get everything up to the pipe
+                let mut command: Vec<String> = Vec::new();
+                let mut flag = false;
+                for j in tmp.as_ref() {
+                    if j != "|" && !flag {
+                        command.push(j.to_owned());
+                    } else if !flag {
+                        flag = true;
+                    } else {
+                        let mut pipeto = process_shell(j.to_owned());
+                        let g2 = pipeto[0].clone();
+
+                        pipeto.remove(0);
+                        run_proccess(
+                            pipeto.into_iter(),
+                            g2,
+                            true,
+                            command_pipe_handler(command.clone().into_iter(), g.clone()),
+                        );
+                    }
+                }
             }
         }
     }
