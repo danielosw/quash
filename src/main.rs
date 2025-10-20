@@ -273,7 +273,32 @@ fn command_run(command: Vec<String>) {
             }
         }
         "pwd" => {
-            println!("{}", env::current_dir().unwrap().to_str().unwrap());
+            if !pipe {
+                println!("{}", env::current_dir().unwrap().to_str().unwrap());
+            } else {
+                let mut flag = false;
+                // until we find a pipe write the strings to the buffer
+                for j in tmp {
+                    if (j == "|") | flag {
+                        // dumb hack
+                        if flag {
+                            // the only time in this that something actually uses stdin is if its a program, so I am making that assumtion
+                            let mut pipeto = process_shell(j);
+                            let g2 = pipeto[0].clone();
+                            pipeto.remove(0);
+                            run_proccess(
+                                pipeto.into_iter(),
+                                g2,
+                                true,
+                                env::current_dir().unwrap().to_str().unwrap().to_string(),
+                            );
+                            return;
+                        } else {
+                            flag = true;
+                        }
+                    }
+                }
+            }
         }
         _ => {
             // check if we are piping
