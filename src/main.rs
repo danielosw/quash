@@ -4,6 +4,7 @@ use std::{
     process::{Command, Stdio},
     thread, vec,
 };
+#[derive(Clone)]
 struct Job {
     id: i64,
     command: Vec<String>,
@@ -15,7 +16,7 @@ struct JobHandler {
     id: i64,
 }
 impl Job {
-    fn spawn_job(&'static mut self) {
+    fn spawn_job(mut self) {
         let g = self.command.clone()[0].clone();
         let mut tmp = self.command.clone();
         tmp.remove(0);
@@ -68,10 +69,16 @@ impl JobHandler {
         self.jobs.insert(self.jobs.len(), new_job);
         id
     }
-    fn end_job(&self, id: i64) {}
-    fn start_job(&'static mut self, id: i64) {
+    fn start_job(self, id: i64) {
         let job_index = self.get_index_by_id(id);
-        self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()].spawn_job();
+        self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()]
+            .clone()
+            .spawn_job();
+    }
+    fn list_jobs(self) {
+        for i in self.jobs {
+            println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(""));
+        }
     }
 }
 fn get_shell_input() -> String {
