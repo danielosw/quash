@@ -56,7 +56,7 @@ impl JobHandler {
     fn get_id_by_index(&self, index: usize) -> i64 {
         self.jobs[index].id
     }
-    fn create_job(mut self, command: Vec<String>) -> i64 {
+    fn create_job(&mut self, command: Vec<String>) -> i64 {
         // create the new job
         let new_job = Job {
             id: self.id,
@@ -69,14 +69,14 @@ impl JobHandler {
         self.jobs.insert(self.jobs.len(), new_job);
         id
     }
-    fn start_job(self, id: i64) {
+    fn start_job(&self, id: i64) {
         let job_index = self.get_index_by_id(id);
         self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()]
             .clone()
             .spawn_job();
     }
-    fn list_jobs(self) {
-        for i in self.jobs {
+    fn list_jobs(&self) {
+        for i in self.jobs.clone() {
             println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(""));
         }
     }
@@ -167,6 +167,22 @@ fn process_shell(buffer: String) -> Vec<String> {
                         endedcur = true;
                     } else {
                         cur.push(i);
+                    }
+                }
+                '&' => {
+                    if !quoted {
+                        //we are at the end and this is a job
+                        if (cur.is_empty()) {
+                            cur.push(i);
+                            parts.push(cur.clone());
+
+                            cur = String::new();
+                        } else {
+                            parts.push(cur);
+                            cur = "&".to_string();
+                            parts.push(cur.clone());
+                            cur = String::new();
+                        }
                     }
                 }
                 _ => {
@@ -309,15 +325,11 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
     return buffer;
 }
 
-fn command_run(command: Vec<String>) {
+fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
     let mut tmp: vec::IntoIter<String> = command.into_iter();
-
-    let mut pipe = false;
-    let mut job = false;
     let tempvec: Vec<String> = tmp.clone().collect();
-    if tempvec.contains(&"|".to_string()) {
-        pipe = true;
-    }
+    let pipe = tempvec.contains(&"|".to_string());
+    let job = tempvec.contains(&"&".to_string());
     let i = tmp.next().unwrap();
     let g = i.clone();
     match g.as_str() {
@@ -403,40 +415,52 @@ fn command_run(command: Vec<String>) {
                 }
             }
         }
-        _ => {
-            // check if we are piping
-            if !pipe {
-                run_proccess(tmp, g, false, "".to_string());
-            } else {
-                // we are piping so
+        "jobs" => {
+            job_handler.list_jobs();
+        }
+        _ if pipe => {
+            // we are piping so
+            // get everything up to the pipe
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != "|" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    let mut pipeto = process_shell(j.to_owned());
+                    let g2 = pipeto[0].clone();
 
-                // get everything up to the pipe
-                let mut command: Vec<String> = Vec::new();
-                let mut flag = false;
-                for j in tmp.as_ref() {
-                    if j != "|" && !flag {
-                        command.push(j.to_owned());
-                    } else if !flag {
-                        flag = true;
-                    } else {
-                        let mut pipeto = process_shell(j.to_owned());
-                        let g2 = pipeto[0].clone();
-
-                        pipeto.remove(0);
-                        run_proccess(
-                            pipeto.into_iter(),
-                            g2,
-                            true,
-                            command_pipe_handler(command.clone().into_iter(), g.clone()),
-                        );
-                    }
+                    pipeto.remove(0);
+                    run_proccess(
+                        pipeto.into_iter(),
+                        g2,
+                        true,
+                        command_pipe_handler(command.clone().into_iter(), g.clone()),
+                    );
                 }
             }
+        }
+        _ if (job) => {
+            let mut command: Vec<String> = tmp.collect();
+            command.insert(0, g);
+            command.remove(command.len() - 1);
+            command.iter().for_each(|f| println!("{}", f));
+            let job = job_handler.create_job(command);
+            job_handler.start_job(job);
+        }
+        _ => {
+            run_proccess(tmp, g, false, "".to_string());
         }
     }
 }
 fn main() {
+    let mut job_handler = JobHandler {
+        id: 0,
+        jobs: Vec::new(),
+    };
     loop {
-        command_run(process_shell(get_shell_input()));
+        command_run(process_shell(get_shell_input()), &mut job_handler);
     }
 }
