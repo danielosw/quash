@@ -2,17 +2,18 @@ use std::{
     env, fs,
     io::{self, Read, Write},
     process::{Command, Stdio},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     thread, vec,
 };
 #[derive(Clone)]
 struct Job {
     id: i64,
     command: Vec<String>,
-    finished: bool,
+    finished: Arc<Mutex<bool>>,
     pid: u32,
 }
 struct JobHandler {
-    jobs: Vec<Job>,
+    jobs: Vec<Arc<Mutex<Job>>>,
     id: i64,
 }
 impl Job {
@@ -22,17 +23,19 @@ impl Job {
         tmp.remove(0);
         let mut job = make_procces_job(tmp.into_iter(), g);
         self.pid = job.id();
+
         // shoot to another thread
         thread::spawn(move || {
             job.wait().unwrap();
+            *self.finished.lock().unwrap() = true;
         });
-        self.finished = true;
     }
 }
 impl JobHandler {
-    fn get_job_by_id(&self, id: i64) -> Option<&Job> {
+    fn get_job_by_id(&self, id: i64) -> std::option::Option<std::sync::MutexGuard<'_, Job>> {
         let jobs = self.jobs.iter().clone();
-        for i in jobs {
+        for g in jobs {
+            let i = g.lock().unwrap();
             if i.id == id {
                 return Some(i);
             }
@@ -41,7 +44,8 @@ impl JobHandler {
     }
     fn get_index_by_id(&self, id: i64) -> Option<i64> {
         let mut counter = 0;
-        for i in self.jobs.iter().clone() {
+        for g in self.jobs.iter().clone() {
+            let i = g.lock().unwrap();
             if i.id == id {
                 return Some(counter);
             } else {
@@ -54,30 +58,39 @@ impl JobHandler {
         self.get_job_by_id(id).unwrap().pid
     }
     fn get_id_by_index(&self, index: usize) -> i64 {
-        self.jobs[index].id
+        self.jobs[index].lock().unwrap().id
     }
     fn create_job(&mut self, command: Vec<String>) -> i64 {
         // create the new job
         let new_job = Job {
             id: self.id,
             command,
-            finished: false,
+            finished: Arc::new(Mutex::new(false)),
             pid: 0,
         };
         self.id += 1;
         let id = new_job.id;
-        self.jobs.insert(self.jobs.len(), new_job);
+        self.jobs
+            .insert(self.jobs.len(), Arc::new(Mutex::new(new_job)));
         id
     }
     fn start_job(&self, id: i64) {
         let job_index = self.get_index_by_id(id);
         self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()]
+            .lock()
+            .unwrap()
             .clone()
             .spawn_job();
     }
     fn list_jobs(&self) {
-        for i in self.jobs.clone() {
-            println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(""));
+        for g in self
+            .jobs
+            .clone()
+            .iter()
+            .filter(|x| !*x.lock().unwrap().finished.lock().unwrap())
+        {
+            let i = g.lock().unwrap();
+            println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(" "));
         }
     }
 }
@@ -126,8 +139,9 @@ fn process_shell(buffer: String) -> Vec<String> {
                     }
                 }
                 '\n' => {
-                    parts.push(cur.clone());
-
+                    if !cur.is_empty() {
+                        parts.push(cur.clone());
+                    }
                     break;
                 }
                 '#' => {
@@ -276,7 +290,7 @@ fn make_procces_job(tmp: vec::IntoIter<String>, g: String) -> std::process::Chil
                 if *file.as_ref().unwrap().file_name() == *name {
                     // check if file is a executable
                     if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
-                        let mut process = Command::new(file.unwrap().path())
+                        let process = Command::new(file.unwrap().path())
                             .args(tmp.clone().map(substatue))
                             .spawn()
                             .unwrap();
