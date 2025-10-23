@@ -1,5 +1,6 @@
 use std::{
-    env, fs,
+    env,
+    fs::{self, File},
     io::{self, Read, Write},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
@@ -187,6 +188,22 @@ fn process_shell(buffer: String) -> Vec<String> {
                         }
                     }
                 }
+                '>' => {
+                    if !quoted {
+                        //we are at the end and this is a job
+                        if cur.is_empty() {
+                            cur.push(i);
+                            parts.push(cur.clone());
+
+                            cur = String::new();
+                        } else {
+                            parts.push(cur);
+                            cur = ">".to_string();
+                            parts.push(cur.clone());
+                            cur = String::new();
+                        }
+                    }
+                }
                 _ => {
                     cur.push(i);
                 }
@@ -332,6 +349,7 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
     let tempvec: Vec<String> = tmp.clone().collect();
     let pipe = tempvec.contains(&"|".to_string());
     let job = tempvec.contains(&"&".to_string());
+    let tofile = tempvec.contains(&">".to_string());
     // return if tmp is empty so we don't break
     if tempvec.is_empty() {
         return;
@@ -429,6 +447,29 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
             let mut args: Vec<String> = tmp.collect();
             args[0] = "-".to_string() + args[0].as_str();
             run_proccess(args.into_iter(), g, false, "".to_string());
+        }
+        _ if tofile => {
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != ">" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    let text = command_pipe_handler(command.clone().into_iter(), g.clone());
+
+                    let create_result = File::create(j);
+                    let mut towrite = match create_result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            println!("Failed to make file: {}", error);
+                            return;
+                        }
+                    };
+                    write!(towrite, "{}", text).unwrap();
+                }
+            }
         }
         _ if pipe => {
             // we are piping so
