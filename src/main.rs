@@ -37,16 +37,6 @@ impl Job {
     }
 }
 impl JobHandler {
-    fn get_job_by_id(&self, id: i64) -> std::option::Option<std::sync::MutexGuard<'_, Job>> {
-        let jobs = self.jobs.iter().clone();
-        for g in jobs {
-            let i = g.lock().unwrap();
-            if i.id == id {
-                return Some(i);
-            }
-        }
-        None
-    }
     fn get_index_by_id(&self, id: i64) -> Option<i64> {
         let mut counter = 0;
         for g in self.jobs.iter().clone() {
@@ -58,12 +48,6 @@ impl JobHandler {
             }
         }
         None
-    }
-    fn get_pid_by_id(&self, id: i64) -> u32 {
-        self.get_job_by_id(id).unwrap().pid
-    }
-    fn get_id_by_index(&self, index: usize) -> i64 {
-        self.jobs[index].lock().unwrap().id
     }
     fn create_job(&mut self, command: Vec<String>) -> i64 {
         // create the new job
