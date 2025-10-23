@@ -562,7 +562,7 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
 }
 fn main() {
     let mut job_handler = JobHandler {
-        id: 0,
+        id: 1,
         jobs: Vec::new(),
     };
     loop {
