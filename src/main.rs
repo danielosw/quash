@@ -2,7 +2,7 @@ use std::{
     env, fs,
     io::{self, Read, Write},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{Arc, Mutex},
     thread, vec,
 };
 #[derive(Clone)]
@@ -186,7 +186,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                 '&' => {
                     if !quoted {
                         //we are at the end and this is a job
-                        if (cur.is_empty()) {
+                        if cur.is_empty() {
                             cur.push(i);
                             parts.push(cur.clone());
 
@@ -336,7 +336,7 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
         }
     }
 
-    return buffer;
+    buffer
 }
 
 fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
