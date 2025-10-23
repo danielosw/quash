@@ -190,7 +190,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                 }
                 '>' => {
                     if !quoted {
-                        //we are at the end and this is a job
+                        //we are at the end and this is a redirect
                         if cur.is_empty() {
                             cur.push(i);
                             parts.push(cur.clone());
@@ -362,11 +362,11 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
         }
         "echo" => {
             // if thier is no pipe or redirect print the strings
-            if !pipe {
+            if !pipe && !tofile {
                 for j in tmp {
                     print!("{} ", substatue(j))
                 }
-            } else {
+            } else if !tofile {
                 // im doing this synconislly for conviniance
 
                 // create a buffer
@@ -388,6 +388,28 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
                         }
                     } else {
                         buf.push_str(&substatue(j));
+                    }
+                }
+            } else {
+                let mut command: Vec<String> = Vec::new();
+                let mut flag = false;
+                for j in tmp.as_ref() {
+                    if j != ">" && !flag {
+                        command.push(substatue(j.to_owned()));
+                    } else if !flag {
+                        flag = true;
+                    } else {
+                        let text = command.join(" ");
+
+                        let create_result = File::create(j);
+                        let mut towrite = match create_result {
+                            Ok(file) => file,
+                            Err(error) => {
+                                println!("Failed to make file: {}", error);
+                                return;
+                            }
+                        };
+                        write!(towrite, "{}", text).unwrap();
                     }
                 }
             }
@@ -412,9 +434,9 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
             }
         }
         "pwd" => {
-            if !pipe {
+            if !pipe && !tofile {
                 println!("{}", env::current_dir().unwrap().to_str().unwrap());
-            } else {
+            } else if !tofile {
                 let mut flag = false;
                 // until we find a pipe write the strings to the buffer
                 for j in tmp {
@@ -431,6 +453,29 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
                                 true,
                                 env::current_dir().unwrap().to_str().unwrap().to_string(),
                             );
+                            return;
+                        } else {
+                            flag = true;
+                        }
+                    }
+                }
+            } else {
+                let mut flag = false;
+                for j in tmp {
+                    if (j == ">") | flag {
+                        // dumb hack
+                        if flag {
+                            let text = env::current_dir().unwrap().to_str().unwrap().to_string();
+                            let create_result = File::create(j);
+                            let mut towrite = match create_result {
+                                Ok(file) => file,
+                                Err(error) => {
+                                    println!("Failed to make file: {}", error);
+                                    return;
+                                }
+                            };
+                            write!(towrite, "{}", text).unwrap();
+
                             return;
                         } else {
                             flag = true;
