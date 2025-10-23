@@ -1,6 +1,6 @@
 use std::{
     env,
-    fs::{self, File},
+    fs::{self, File, read_to_string},
     io::{self, Read, Write},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
@@ -172,7 +172,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                         cur.push(i);
                     }
                 }
-                '&' => {
+                '&' | '>' | '<' => {
                     if !quoted {
                         //we are at the end and this is a job
                         if cur.is_empty() {
@@ -182,23 +182,7 @@ fn process_shell(buffer: String) -> Vec<String> {
                             cur = String::new();
                         } else {
                             parts.push(cur);
-                            cur = "&".to_string();
-                            parts.push(cur.clone());
-                            cur = String::new();
-                        }
-                    }
-                }
-                '>' => {
-                    if !quoted {
-                        //we are at the end and this is a redirect
-                        if cur.is_empty() {
-                            cur.push(i);
-                            parts.push(cur.clone());
-
-                            cur = String::new();
-                        } else {
-                            parts.push(cur);
-                            cur = ">".to_string();
+                            cur = i.to_string();
                             parts.push(cur.clone());
                             cur = String::new();
                         }
@@ -350,6 +334,7 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
     let pipe = tempvec.contains(&"|".to_string());
     let job = tempvec.contains(&"&".to_string());
     let tofile = tempvec.contains(&">".to_string());
+    let fromfile = tempvec.contains(&"<".to_string());
     // return if tmp is empty so we don't break
     if tempvec.is_empty() {
         return;
@@ -537,6 +522,29 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
                         true,
                         command_pipe_handler(command.clone().into_iter(), g.clone()),
                     );
+                }
+            }
+        }
+        _ if fromfile => {
+            // this is basiclly piping but we read from a file instead of from a command
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != "<" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    let create_result = read_to_string(j);
+                    let read = match create_result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            println!("Failed to read file: {}", error);
+                            return;
+                        }
+                    };
+
+                    run_proccess(command.clone().into_iter(), g.clone(), true, read);
                 }
             }
         }
