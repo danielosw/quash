@@ -28,6 +28,11 @@ impl Job {
         thread::spawn(move || {
             job.wait().unwrap();
             *self.finished.lock().unwrap() = true;
+            println!("Job {} done", self.id);
+            // reset the console
+            //
+            print!("[QUASH]$ ");
+            io::stdout().flush().unwrap();
         });
     }
 }
@@ -460,7 +465,6 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
             let mut command: Vec<String> = tmp.collect();
             command.insert(0, g);
             command.remove(command.len() - 1);
-            command.iter().for_each(|f| println!("{}", f));
             let job = job_handler.create_job(command);
             job_handler.start_job(job);
         }
