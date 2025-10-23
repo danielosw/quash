@@ -30,7 +30,6 @@ impl Job {
             *self.finished.lock().unwrap() = true;
             println!("Job {} done", self.id);
             // reset the console
-            //
             print!("[QUASH]$ ");
             io::stdout().flush().unwrap();
         });
@@ -333,6 +332,10 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
     let tempvec: Vec<String> = tmp.clone().collect();
     let pipe = tempvec.contains(&"|".to_string());
     let job = tempvec.contains(&"&".to_string());
+    // return if tmp is empty so we don't break
+    if tempvec.is_empty() {
+        return;
+    };
     let i = tmp.next().unwrap();
     let g = i.clone();
     match g.as_str() {
@@ -420,6 +423,12 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
         }
         "jobs" => {
             job_handler.list_jobs();
+        }
+        "kill" => {
+            // I don't think im supposed to do it this way but rust does not have kill for safty reasons
+            let mut args: Vec<String> = tmp.collect();
+            args[0] = "-".to_string() + args[0].as_str();
+            run_proccess(args.into_iter(), g, false, "".to_string());
         }
         _ if pipe => {
             // we are piping so
