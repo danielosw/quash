@@ -1,5 +1,5 @@
 use std::{
-    env::{self, join_paths},
+    env::{self},
     fs::{self, read_to_string, File},
     io::{self, Read, Write},
     process::{Command, Stdio},
@@ -26,12 +26,27 @@ impl Job {
         tmp.remove(0);
         let mut job = make_procces_job(tmp.into_iter(), g);
         job_arc.lock().unwrap().pid = job.id();
-
+        let binding = job_arc.clone();
+        let tmpjob = binding.lock().unwrap();
+        println!(
+            "Background job started: [{}] {} {}",
+            tmpjob.id,
+            tmpjob.pid,
+            tmpjob.command.join(" ") + " &"
+        );
         // shoot to another thread
         thread::spawn(move || {
             job.wait().unwrap();
             *job_arc.lock().unwrap().finished.lock().unwrap() = true;
-            println!("Job {} done", job_arc.lock().unwrap().id);
+            let binding = job_arc.clone();
+            let tmpjob = binding.lock().unwrap();
+
+            println!(
+                "\nCompleted: [{}] {} {}",
+                tmpjob.id,
+                tmpjob.pid,
+                tmpjob.command.join(" ") + " &"
+            );
             // reset the console
             print!("[QUASH]$ ");
             io::stdout().flush().unwrap();
@@ -331,7 +346,7 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
 fn command_run(
     command: Vec<String>,
     job_handler: &mut JobHandler,
-    returnString: bool,
+    return_string: bool,
     stdin: bool,
     texter: String,
 ) -> Option<String> {
@@ -439,7 +454,7 @@ fn command_run(
         }
         "echo" => {
             // if thier is no pipe or redirect print the strings
-            if !returnString {
+            if !return_string {
                 println!("{}", substatue(tmp.collect::<Vec<String>>().join(" ")));
             } else {
                 return Some(tmp.collect::<Vec<String>>().join(" "));
@@ -464,7 +479,7 @@ fn command_run(
             }
         }
         "pwd" => {
-            if !returnString {
+            if !return_string {
                 println!("{}", env::current_dir().unwrap().to_str().unwrap());
             } else {
                 return Some(env::current_dir().unwrap().to_str().unwrap().to_string());
@@ -474,11 +489,14 @@ fn command_run(
             job_handler.list_jobs();
         }
         "kill" => {
-            // I don't think im supposed to do it this way but rust does not have kill for safty reasons
-            // so instead I find and run the kill executable
-            let mut args: Vec<String> = tmp.collect();
-            args[0] = "-".to_string() + args[0].as_str();
-            run_proccess(args.into_iter(), g, false, "".to_string());
+            let args: Vec<String> = tmp.collect();
+            unsafe extern "C" {
+                unsafe fn kill(pid: i32, sig: i32) -> i32;
+            }
+            // because this is an external function rust can't gaurrenty memory safety
+            unsafe {
+                kill(args[1].parse().unwrap(), args[0].parse().unwrap());
+            }
         }
 
         _ if (job) => {
@@ -489,11 +507,11 @@ fn command_run(
             job_handler.start_job(job);
         }
         _ => {
-            if !stdin && !returnString {
+            if !stdin && !return_string {
                 run_proccess(tmp, g, false, "".to_string());
-            } else if !returnString && stdin {
+            } else if !return_string && stdin {
                 run_proccess(tmp, g, true, texter);
-            } else if returnString && !stdin {
+            } else if return_string && !stdin {
                 return Some(command_pipe_handler(tmp, g));
             }
         }
