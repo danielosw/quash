@@ -20,18 +20,18 @@ struct JobHandler {
     id: i64,
 }
 impl Job {
-    fn spawn_job(mut self) {
-        let g = self.command.clone()[0].clone();
-        let mut tmp = self.command.clone();
+    fn spawn_job(job_arc: Arc<Mutex<Job>>) {
+        let g = job_arc.lock().unwrap().command.clone()[0].clone();
+        let mut tmp = job_arc.lock().unwrap().command.clone();
         tmp.remove(0);
         let mut job = make_procces_job(tmp.into_iter(), g);
-        self.pid = job.id();
+        job_arc.lock().unwrap().pid = job.id();
 
         // shoot to another thread
         thread::spawn(move || {
             job.wait().unwrap();
-            *self.finished.lock().unwrap() = true;
-            println!("Job {} done", self.id);
+            *job_arc.lock().unwrap().finished.lock().unwrap() = true;
+            println!("Job {} done", job_arc.lock().unwrap().id);
             // reset the console
             print!("[QUASH]$ ");
             io::stdout().flush().unwrap();
@@ -67,11 +67,9 @@ impl JobHandler {
     }
     fn start_job(&self, id: i64) {
         let job_index = self.get_index_by_id(id);
-        self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()]
-            .lock()
-            .unwrap()
-            .clone()
-            .spawn_job();
+        let job_arc =
+            self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()].clone();
+        Job::spawn_job(job_arc);
     }
     fn list_jobs(&self) {
         for g in self
