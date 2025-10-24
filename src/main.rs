@@ -476,63 +476,74 @@ fn command_run(
             job_handler.list_jobs();
         }
         "kill" => {
-            // Send signal directly to the process using system call
-            let args: Vec<String> = tmp.collect();
-            if args.is_empty() {
-                println!("Usage: kill [-signal] <pid>");
+            // Check if kill system call is available (Unix-like systems only)
+            #[cfg(not(unix))]
+            {
+                println!("Error: kill command is not available on this system");
+                println!("The kill system call requires a Unix-like operating system (Linux, macOS, BSD, etc.)");
                 return None;
             }
             
-            // Default signal is SIGTERM (15)
-            let mut signal: i32 = 15; // SIGTERM
-            let mut pid_str = &args[0];
-            
-            // Check if first argument is a signal (starts with -)
-            if args[0].starts_with('-') {
-                if args.len() < 2 {
+            #[cfg(unix)]
+            {
+                // Send signal directly to the process using system call
+                let args: Vec<String> = tmp.collect();
+                if args.is_empty() {
                     println!("Usage: kill [-signal] <pid>");
                     return None;
                 }
                 
-                // Parse signal number (e.g., "-9" for SIGKILL)
-                let signal_str = &args[0][1..]; // Remove the '-' prefix
-                signal = match signal_str.parse() {
+                // Default signal is SIGTERM (15)
+                let mut signal: i32 = 15; // SIGTERM
+                let mut pid_str = &args[0];
+                
+                // Check if first argument is a signal (starts with -)
+                if args[0].starts_with('-') {
+                    if args.len() < 2 {
+                        println!("Usage: kill [-signal] <pid>");
+                        return None;
+                    }
+                    
+                    // Parse signal number (e.g., "-9" for SIGKILL)
+                    let signal_str = &args[0][1..]; // Remove the '-' prefix
+                    signal = match signal_str.parse() {
+                        Ok(num) => num,
+                        Err(_) => {
+                            println!("Invalid signal number: {}", signal_str);
+                            return None;
+                        }
+                    };
+                    
+                    pid_str = &args[1];
+                }
+                
+                // Parse PID
+                let pid: i32 = match pid_str.parse() {
                     Ok(num) => num,
                     Err(_) => {
-                        println!("Invalid signal number: {}", signal_str);
+                        println!("Invalid PID: {}", pid_str);
                         return None;
                     }
                 };
                 
-                pid_str = &args[1];
-            }
-            
-            // Parse PID
-            let pid: i32 = match pid_str.parse() {
-                Ok(num) => num,
-                Err(_) => {
-                    println!("Invalid PID: {}", pid_str);
+                // Validate that PID is positive to prevent signaling process groups
+                if pid <= 0 {
+                    println!("Invalid PID: PID must be a positive number");
                     return None;
                 }
-            };
-            
-            // Validate that PID is positive to prevent signaling process groups
-            if pid <= 0 {
-                println!("Invalid PID: PID must be a positive number");
-                return None;
-            }
-            
-            // Send signal to the process using kill system call
-            // Use extern "C" to call the system kill function directly
-            extern "C" {
-                fn kill(pid: i32, sig: i32) -> i32;
-            }
-            
-            unsafe {
-                let result = kill(pid, signal);
-                if result != 0 {
-                    let errno = std::io::Error::last_os_error();
-                    println!("Failed to send signal: {}", errno);
+                
+                // Send signal to the process using kill system call
+                // Use extern "C" to call the system kill function directly
+                extern "C" {
+                    fn kill(pid: i32, sig: i32) -> i32;
+                }
+                
+                unsafe {
+                    let result = kill(pid, signal);
+                    if result != 0 {
+                        let errno = std::io::Error::last_os_error();
+                        println!("Failed to send signal: {}", errno);
+                    }
                 }
             }
         }
