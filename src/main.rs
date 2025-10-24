@@ -1,6 +1,6 @@
 use std::{
-    env,
-    fs::{self, File, read_to_string},
+    env::{self, join_paths},
+    fs::{self, read_to_string, File},
     io::{self, Read, Write},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
@@ -13,6 +13,8 @@ struct Job {
     finished: Arc<Mutex<bool>>,
     pid: u32,
 }
+#[derive(Clone)]
+
 struct JobHandler {
     jobs: Vec<Arc<Mutex<Job>>>,
     id: i64,
@@ -328,7 +330,13 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
     buffer
 }
 
-fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
+fn command_run(
+    command: Vec<String>,
+    job_handler: &mut JobHandler,
+    returnString: bool,
+    stdin: bool,
+    texter: String,
+) -> Option<String> {
     let mut tmp: vec::IntoIter<String> = command.into_iter();
     let tempvec: Vec<String> = tmp.clone().collect();
     let pipe = tempvec.contains(&"|".to_string());
@@ -337,7 +345,7 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
     let fromfile = tempvec.contains(&"<".to_string());
     // return if tmp is empty so we don't break
     if tempvec.is_empty() {
-        return;
+        return None;
     };
     let i = tmp.next().unwrap();
     let g = i.clone();
@@ -345,60 +353,99 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
         "exit" | "quit" => {
             std::process::exit(0);
         }
-        "echo" => {
-            // if thier is no pipe or redirect print the strings
-            if !pipe && !tofile {
-                for j in tmp {
-                    print!("{} ", substatue(j))
-                }
-            } else if !tofile {
-                // im doing this synconislly for conviniance
+        _ if tofile => {
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != ">" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    command.insert(0, g.clone());
 
-                // create a buffer
-                let mut buf = String::new();
-                let mut flag = false;
-                // until we find a pipe write the strings to the buffer
-                for j in tmp {
-                    if (j == "|") | flag {
-                        // dumb hack
-                        if flag {
-                            // the only time in this that something actually uses stdin is if its a program, so I am making that assumtion
-                            let mut pipeto = process_shell(j);
-                            let g2 = pipeto[0].clone();
-                            pipeto.remove(0);
-                            run_proccess(pipeto.into_iter(), g2, true, buf);
-                            return;
-                        } else {
-                            flag = true;
+                    let text = command_run(
+                        command.clone().into_iter().collect(),
+                        job_handler,
+                        true,
+                        false,
+                        "".to_string(),
+                    )
+                    .unwrap();
+
+                    let create_result = File::create(j);
+                    let mut towrite = match create_result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            println!("Failed to make file: {}", error);
+                            return None;
                         }
-                    } else {
-                        buf.push_str(&substatue(j));
-                    }
-                }
-            } else {
-                let mut command: Vec<String> = Vec::new();
-                let mut flag = false;
-                for j in tmp.as_ref() {
-                    if j != ">" && !flag {
-                        command.push(substatue(j.to_owned()));
-                    } else if !flag {
-                        flag = true;
-                    } else {
-                        let text = command.join(" ");
-
-                        let create_result = File::create(j);
-                        let mut towrite = match create_result {
-                            Ok(file) => file,
-                            Err(error) => {
-                                println!("Failed to make file: {}", error);
-                                return;
-                            }
-                        };
-                        write!(towrite, "{}", text).unwrap();
-                    }
+                    };
+                    write!(towrite, "{}", text).unwrap();
                 }
             }
-            println!();
+        }
+        _ if fromfile => {
+            // this is basiclly piping but we read from a file instead of from a command
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != "<" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    let create_result = read_to_string(j);
+                    let read = match create_result {
+                        Ok(file) => file,
+                        Err(error) => {
+                            println!("Failed to read file: {}", error);
+                            return None;
+                        }
+                    };
+                    command.insert(0, g.clone());
+
+                    command_run(command.clone(), job_handler, false, true, read);
+                }
+            }
+        }
+        _ if pipe => {
+            // we are piping so
+            // get everything up to the pipe
+            let mut command: Vec<String> = Vec::new();
+            let mut flag = false;
+            for j in tmp.as_ref() {
+                if j != "|" && !flag {
+                    command.push(j.to_owned());
+                } else if !flag {
+                    flag = true;
+                } else {
+                    let pipeto = process_shell(j.to_owned());
+                    command.insert(0, g.clone());
+                    command_run(
+                        pipeto,
+                        &mut job_handler.clone(),
+                        false,
+                        true,
+                        command_run(
+                            command.clone().into_iter().collect(),
+                            job_handler,
+                            true,
+                            false,
+                            "".to_string(),
+                        )
+                        .unwrap(),
+                    );
+                }
+            }
+        }
+        "echo" => {
+            // if thier is no pipe or redirect print the strings
+            if !returnString {
+                println!("{}", substatue(tmp.collect::<Vec<String>>().join(" ")));
+            } else {
+                return Some(tmp.collect::<Vec<String>>().join(" "));
+            }
         }
         "export" => {
             let j = tmp.next();
@@ -419,54 +466,10 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
             }
         }
         "pwd" => {
-            if !pipe && !tofile {
+            if !returnString {
                 println!("{}", env::current_dir().unwrap().to_str().unwrap());
-            } else if !tofile {
-                let mut flag = false;
-                // until we find a pipe write the strings to the buffer
-                for j in tmp {
-                    if (j == "|") | flag {
-                        // dumb hack
-                        if flag {
-                            // the only time in this that something actually uses stdin is if its a program, so I am making that assumtion
-                            let mut pipeto = process_shell(j);
-                            let g2 = pipeto[0].clone();
-                            pipeto.remove(0);
-                            run_proccess(
-                                pipeto.into_iter(),
-                                g2,
-                                true,
-                                env::current_dir().unwrap().to_str().unwrap().to_string(),
-                            );
-                            return;
-                        } else {
-                            flag = true;
-                        }
-                    }
-                }
             } else {
-                let mut flag = false;
-                for j in tmp {
-                    if (j == ">") | flag {
-                        // dumb hack
-                        if flag {
-                            let text = env::current_dir().unwrap().to_str().unwrap().to_string();
-                            let create_result = File::create(j);
-                            let mut towrite = match create_result {
-                                Ok(file) => file,
-                                Err(error) => {
-                                    println!("Failed to make file: {}", error);
-                                    return;
-                                }
-                            };
-                            write!(towrite, "{}", text).unwrap();
-
-                            return;
-                        } else {
-                            flag = true;
-                        }
-                    }
-                }
+                return Some(env::current_dir().unwrap().to_str().unwrap().to_string());
             }
         }
         "jobs" => {
@@ -474,80 +477,12 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
         }
         "kill" => {
             // I don't think im supposed to do it this way but rust does not have kill for safty reasons
+            // so instead I find and run the kill executable
             let mut args: Vec<String> = tmp.collect();
             args[0] = "-".to_string() + args[0].as_str();
             run_proccess(args.into_iter(), g, false, "".to_string());
         }
-        _ if tofile => {
-            let mut command: Vec<String> = Vec::new();
-            let mut flag = false;
-            for j in tmp.as_ref() {
-                if j != ">" && !flag {
-                    command.push(j.to_owned());
-                } else if !flag {
-                    flag = true;
-                } else {
-                    let text = command_pipe_handler(command.clone().into_iter(), g.clone());
 
-                    let create_result = File::create(j);
-                    let mut towrite = match create_result {
-                        Ok(file) => file,
-                        Err(error) => {
-                            println!("Failed to make file: {}", error);
-                            return;
-                        }
-                    };
-                    write!(towrite, "{}", text).unwrap();
-                }
-            }
-        }
-        _ if pipe => {
-            // we are piping so
-            // get everything up to the pipe
-            let mut command: Vec<String> = Vec::new();
-            let mut flag = false;
-            for j in tmp.as_ref() {
-                if j != "|" && !flag {
-                    command.push(j.to_owned());
-                } else if !flag {
-                    flag = true;
-                } else {
-                    let mut pipeto = process_shell(j.to_owned());
-                    let g2 = pipeto[0].clone();
-
-                    pipeto.remove(0);
-                    run_proccess(
-                        pipeto.into_iter(),
-                        g2,
-                        true,
-                        command_pipe_handler(command.clone().into_iter(), g.clone()),
-                    );
-                }
-            }
-        }
-        _ if fromfile => {
-            // this is basiclly piping but we read from a file instead of from a command
-            let mut command: Vec<String> = Vec::new();
-            let mut flag = false;
-            for j in tmp.as_ref() {
-                if j != "<" && !flag {
-                    command.push(j.to_owned());
-                } else if !flag {
-                    flag = true;
-                } else {
-                    let create_result = read_to_string(j);
-                    let read = match create_result {
-                        Ok(file) => file,
-                        Err(error) => {
-                            println!("Failed to read file: {}", error);
-                            return;
-                        }
-                    };
-
-                    run_proccess(command.clone().into_iter(), g.clone(), true, read);
-                }
-            }
-        }
         _ if (job) => {
             let mut command: Vec<String> = tmp.collect();
             command.insert(0, g);
@@ -556,9 +491,16 @@ fn command_run(command: Vec<String>, job_handler: &mut JobHandler) {
             job_handler.start_job(job);
         }
         _ => {
-            run_proccess(tmp, g, false, "".to_string());
+            if !stdin && !returnString {
+                run_proccess(tmp, g, false, "".to_string());
+            } else if !returnString && stdin {
+                run_proccess(tmp, g, true, texter);
+            } else if returnString && !stdin {
+                return Some(command_pipe_handler(tmp, g));
+            }
         }
     }
+    None
 }
 fn main() {
     let mut job_handler = JobHandler {
@@ -566,6 +508,12 @@ fn main() {
         jobs: Vec::new(),
     };
     loop {
-        command_run(process_shell(get_shell_input()), &mut job_handler);
+        command_run(
+            process_shell(get_shell_input()),
+            &mut job_handler,
+            false,
+            false,
+            "".to_string(),
+        );
     }
 }
