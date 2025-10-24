@@ -6,8 +6,6 @@ use std::{
     sync::{Arc, Mutex},
     thread, vec,
 };
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
 #[derive(Clone)]
 struct Job {
     id: i64,
@@ -478,7 +476,7 @@ fn command_run(
             job_handler.list_jobs();
         }
         "kill" => {
-            // Send signal directly to the process using nix library
+            // Send signal directly to the process using system call
             let args: Vec<String> = tmp.collect();
             if args.is_empty() {
                 println!("Usage: kill [-signal] <pid>");
@@ -486,7 +484,7 @@ fn command_run(
             }
             
             // Default signal is SIGTERM (15)
-            let mut signal = Signal::SIGTERM;
+            let mut signal: i32 = 15; // SIGTERM
             let mut pid_str = &args[0];
             
             // Check if first argument is a signal (starts with -)
@@ -498,18 +496,10 @@ fn command_run(
                 
                 // Parse signal number (e.g., "-9" for SIGKILL)
                 let signal_str = &args[0][1..]; // Remove the '-' prefix
-                let signal_num: i32 = if let Ok(num) = signal_str.parse() {
-                    num
-                } else {
-                    println!("Invalid signal number: {}", signal_str);
-                    return None;
-                };
-                
-                // Convert signal number to Signal enum
-                signal = match Signal::try_from(signal_num) {
-                    Ok(sig) => sig,
+                signal = match signal_str.parse() {
+                    Ok(num) => num,
                     Err(_) => {
-                        println!("Invalid signal number: {}", signal_num);
+                        println!("Invalid signal number: {}", signal_str);
                         return None;
                     }
                 };
@@ -518,11 +508,12 @@ fn command_run(
             }
             
             // Parse PID
-            let pid: i32 = if let Ok(num) = pid_str.parse() {
-                num
-            } else {
-                println!("Invalid PID: {}", pid_str);
-                return None;
+            let pid: i32 = match pid_str.parse() {
+                Ok(num) => num,
+                Err(_) => {
+                    println!("Invalid PID: {}", pid_str);
+                    return None;
+                }
             };
             
             // Validate that PID is positive to prevent signaling process groups
@@ -531,13 +522,17 @@ fn command_run(
                 return None;
             }
             
-            // Send signal to the process
-            match signal::kill(Pid::from_raw(pid), signal) {
-                Ok(_) => {
-                    // Signal sent successfully
-                }
-                Err(err) => {
-                    println!("Failed to send signal: {}", err);
+            // Send signal to the process using kill system call
+            // Use extern "C" to call the system kill function directly
+            extern "C" {
+                fn kill(pid: i32, sig: i32) -> i32;
+            }
+            
+            unsafe {
+                let result = kill(pid, signal);
+                if result != 0 {
+                    let errno = std::io::Error::last_os_error();
+                    println!("Failed to send signal: {}", errno);
                 }
             }
         }
