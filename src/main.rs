@@ -525,6 +525,12 @@ fn command_run(
                 return None;
             };
             
+            // Validate that PID is positive to prevent signaling process groups
+            if pid <= 0 {
+                println!("Invalid PID: PID must be a positive number");
+                return None;
+            }
+            
             // Send signal to the process
             match signal::kill(Pid::from_raw(pid), signal) {
                 Ok(_) => {
