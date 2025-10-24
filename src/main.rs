@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, Mutex},
     thread, vec,
 };
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 #[derive(Clone)]
 struct Job {
     id: i64,
@@ -476,11 +478,62 @@ fn command_run(
             job_handler.list_jobs();
         }
         "kill" => {
-            // I don't think im supposed to do it this way but rust does not have kill for safty reasons
-            // so instead I find and run the kill executable
-            let mut args: Vec<String> = tmp.collect();
-            args[0] = "-".to_string() + args[0].as_str();
-            run_proccess(args.into_iter(), g, false, "".to_string());
+            // Send signal directly to the process using nix library
+            let args: Vec<String> = tmp.collect();
+            if args.is_empty() {
+                println!("Usage: kill [-signal] <pid>");
+                return None;
+            }
+            
+            // Default signal is SIGTERM (15)
+            let mut signal = Signal::SIGTERM;
+            let mut pid_str = &args[0];
+            
+            // Check if first argument is a signal (starts with -)
+            if args[0].starts_with('-') {
+                if args.len() < 2 {
+                    println!("Usage: kill [-signal] <pid>");
+                    return None;
+                }
+                
+                // Parse signal number (e.g., "-9" for SIGKILL)
+                let signal_str = &args[0][1..]; // Remove the '-' prefix
+                let signal_num: i32 = if let Ok(num) = signal_str.parse() {
+                    num
+                } else {
+                    println!("Invalid signal number: {}", signal_str);
+                    return None;
+                };
+                
+                // Convert signal number to Signal enum
+                signal = match Signal::try_from(signal_num) {
+                    Ok(sig) => sig,
+                    Err(_) => {
+                        println!("Invalid signal number: {}", signal_num);
+                        return None;
+                    }
+                };
+                
+                pid_str = &args[1];
+            }
+            
+            // Parse PID
+            let pid: i32 = if let Ok(num) = pid_str.parse() {
+                num
+            } else {
+                println!("Invalid PID: {}", pid_str);
+                return None;
+            };
+            
+            // Send signal to the process
+            match signal::kill(Pid::from_raw(pid), signal) {
+                Ok(_) => {
+                    // Signal sent successfully
+                }
+                Err(err) => {
+                    println!("Failed to send signal: {}", err);
+                }
+            }
         }
 
         _ if (job) => {
