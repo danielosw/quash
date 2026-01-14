@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, Mutex},
     thread, vec,
 };
+use futures::future::{BoxFuture, FutureExt};
 #[derive(Clone)]
 struct Job {
     id: i64,
@@ -345,11 +346,13 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
 
 fn command_run(
     command: Vec<String>,
-    job_handler: &mut JobHandler,
+    job_handler: &mut Arc<Mutex<JobHandler>>,
     return_string: bool,
     stdin: bool,
     texter: String,
-) -> Option<String> {
+) -> BoxFuture<'static, Option<String>> {
+    let job_handler = job_handler.clone();
+    async move {
     let mut tmp: vec::IntoIter<String> = command.into_iter();
     let tempvec: Vec<String> = tmp.clone().collect();
     let pipe = tempvec.contains(&"|".to_string());
@@ -377,13 +380,14 @@ fn command_run(
                 } else {
                     command.insert(0, g.clone());
 
-                    let text = command_run(
+                    let text = Box::pin(command_run(
                         command.clone().into_iter().collect(),
-                        job_handler,
+                        &mut job_handler.clone(),
                         true,
                         false,
                         "".to_string(),
-                    )
+                    ))
+                    .await
                     .unwrap();
 
                     let create_result = File::create(j);
@@ -418,7 +422,7 @@ fn command_run(
                     };
                     command.insert(0, g.clone());
 
-                    command_run(command.clone(), job_handler, false, true, read);
+                    Box::pin(command_run(command.clone(), &mut job_handler.clone(), false, true, read)).await;
                 }
             }
         }
@@ -435,20 +439,22 @@ fn command_run(
                 } else {
                     let pipeto = process_shell(j.to_owned());
                     command.insert(0, g.clone());
-                    command_run(
+                    let inner_result = Box::pin(command_run(
+                        command.clone().into_iter().collect(),
+                        &mut job_handler.clone(),
+                        true,
+                        false,
+                        "".to_string(),
+                    ))
+                    .await
+                    .unwrap();
+                    Box::pin(command_run(
                         pipeto,
                         &mut job_handler.clone(),
                         false,
                         true,
-                        command_run(
-                            command.clone().into_iter().collect(),
-                            job_handler,
-                            true,
-                            false,
-                            "".to_string(),
-                        )
-                        .unwrap(),
-                    );
+                        inner_result,
+                    )).await;
                 }
             }
         }
@@ -486,7 +492,7 @@ fn command_run(
             }
         }
         "jobs" => {
-            job_handler.list_jobs();
+            job_handler.lock().unwrap().list_jobs();
         }
         "kill" => {
             let args: Vec<String> = tmp.collect();
@@ -503,8 +509,8 @@ fn command_run(
             let mut command: Vec<String> = tmp.collect();
             command.insert(0, g);
             command.remove(command.len() - 1);
-            let job = job_handler.create_job(command);
-            job_handler.start_job(job);
+            let job_arc = job_handler.lock().unwrap().create_job(command);
+            job_handler.lock().unwrap().start_job(job_arc);
         }
         _ => {
             if !stdin && !return_string {
@@ -517,12 +523,14 @@ fn command_run(
         }
     }
     None
+    }.boxed()
 }
-fn main() {
-    let mut job_handler = JobHandler {
+#[tokio::main]
+async fn main() {
+    let mut job_handler = Arc::new(Mutex::new(JobHandler {
         id: 1,
         jobs: Vec::new(),
-    };
+    }));
     loop {
         command_run(
             process_shell(get_shell_input()),
@@ -530,6 +538,6 @@ fn main() {
             false,
             false,
             "".to_string(),
-        );
+        ).await;
     }
 }
