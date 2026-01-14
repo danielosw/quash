@@ -54,7 +54,8 @@ impl Job {
             );
             // reset the console
             print!("[QUASH]$ ");
-            stdout().flush().await.unwrap();
+            // flush stdout to ensure prompt appears
+            io::stdout().flush().unwrap();
         });
     }
 }
