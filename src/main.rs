@@ -10,6 +10,7 @@ use tokio::{
     fs::{read_to_string, File},
     io::{stdout, AsyncReadExt, AsyncWriteExt},
     process::Command as TCommand,
+    sync::Mutex as AsyncMutex,
 };
 #[derive(Clone)]
 struct Job {
@@ -369,7 +370,7 @@ async fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
 
 async fn command_run(
     command: Vec<String>,
-    job_handler: &mut Arc<Mutex<JobHandler>>,
+    job_handler: &mut Arc<AsyncMutex<JobHandler>>,
     return_string: bool,
     stdin: bool,
     texter: String,
@@ -521,7 +522,7 @@ async fn command_run(
             }
         }
         "jobs" => {
-            job_handler.lock().unwrap().list_jobs().await;
+            job_handler.lock().await.list_jobs().await;
         }
         /*
                "kill" => {
@@ -539,8 +540,8 @@ async fn command_run(
             let mut command: Vec<String> = tmp.collect();
             command.insert(0, g);
             command.remove(command.len() - 1);
-            let job = job_handler.lock().unwrap().create_job(command).await;
-            job_handler.lock().unwrap().start_job(job).await;
+            let job = job_handler.lock().await.create_job(command).await;
+            job_handler.lock().await.start_job(job).await;
         }
         _ => {
             if !stdin && !return_string {
@@ -557,7 +558,7 @@ async fn command_run(
 }
 #[tokio::main]
 async fn main() {
-    let mut job_handler = Arc::new(Mutex::new(JobHandler {
+    let mut job_handler = Arc::new(AsyncMutex::new(JobHandler {
         id: 1,
         jobs: Vec::new(),
     }));
