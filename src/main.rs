@@ -1,3 +1,4 @@
+use futures::future::{BoxFuture, FutureExt};
 use std::{
     env::{self},
     fs::{self, read_to_string, File},
@@ -5,6 +6,12 @@ use std::{
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread, vec,
+};
+use tokio::{
+    fs::{self as Tfs, read_to_string as Tread_to_string, File as TFile},
+    io::{AsyncRead, AsyncWrite},
+    process::Command as TCommand,
+    sync::Mutex as TMutex,
 };
 #[derive(Clone)]
 struct Job {
@@ -343,13 +350,13 @@ fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
     buffer
 }
 
-fn command_run(
+async fn command_run(
     command: Vec<String>,
-    job_handler: &mut JobHandler,
+    job_handler: &mut Arc<Mutex<JobHandler>>,
     return_string: bool,
     stdin: bool,
     texter: String,
-) -> Option<String> {
+) -> BoxFuture<'static, Option<String>> {
     let mut tmp: vec::IntoIter<String> = command.into_iter();
     let tempvec: Vec<String> = tmp.clone().collect();
     let pipe = tempvec.contains(&"|".to_string());
@@ -358,7 +365,7 @@ fn command_run(
     let fromfile = tempvec.contains(&"<".to_string());
     // return if tmp is empty so we don't break
     if tempvec.is_empty() {
-        return None;
+        return async move { None }.boxed();
     };
     let i = tmp.next().unwrap();
     let g = i.clone();
@@ -377,24 +384,25 @@ fn command_run(
                 } else {
                     command.insert(0, g.clone());
 
-                    let text = command_run(
+                    let text: std::pin::Pin<
+                        Box<dyn futures::Future<Output = Option<String>> + std::marker::Send>,
+                    > = Box::pin(command_run(
                         command.clone().into_iter().collect(),
                         job_handler,
                         true,
                         false,
                         "".to_string(),
-                    )
-                    .unwrap();
-
+                    ))
+                    .await;
                     let create_result = File::create(j);
                     let mut towrite = match create_result {
                         Ok(file) => file,
                         Err(error) => {
                             println!("Failed to make file: {}", error);
-                            return None;
+                            return async move { None }.boxed();
                         }
                     };
-                    write!(towrite, "{}", text).unwrap();
+                    write!(towrite, "{}", text.await.clone().unwrap()).unwrap();
                 }
             }
         }
@@ -413,7 +421,7 @@ fn command_run(
                         Ok(file) => file,
                         Err(error) => {
                             println!("Failed to read file: {}", error);
-                            return None;
+                            return async move { None }.boxed();
                         }
                     };
                     command.insert(0, g.clone());
@@ -435,18 +443,23 @@ fn command_run(
                 } else {
                     let pipeto = process_shell(j.to_owned());
                     command.insert(0, g.clone());
+                    let value = command.clone();
                     command_run(
                         pipeto,
                         &mut job_handler.clone(),
                         false,
                         true,
-                        command_run(
-                            command.clone().into_iter().collect(),
-                            job_handler,
-                            true,
-                            false,
-                            "".to_string(),
+                        Box::pin(
+                            command_run(
+                                value.clone().into_iter().collect(),
+                                job_handler,
+                                true,
+                                false,
+                                "".to_string(),
+                            )
+                            .await,
                         )
+                        .await
                         .unwrap(),
                     );
                 }
@@ -457,7 +470,7 @@ fn command_run(
             if !return_string {
                 println!("{}", substatue(tmp.collect::<Vec<String>>().join(" ")));
             } else {
-                return Some(tmp.collect::<Vec<String>>().join(" "));
+                return async move { Some(tmp.collect::<Vec<String>>().join(" ")) }.boxed();
             }
         }
         "export" => {
@@ -482,11 +495,11 @@ fn command_run(
             if !return_string {
                 println!("{}", env::current_dir().unwrap().to_str().unwrap());
             } else {
-                return Some(env::current_dir().unwrap().to_str().unwrap().to_string());
+                return async move {Some(env::current_dir().unwrap().to_str().unwrap().to_string())}.boxed();
             }
         }
         "jobs" => {
-            job_handler.list_jobs();
+            job_handler.lock().unwrap().list_jobs();
         }
         "kill" => {
             let args: Vec<String> = tmp.collect();
@@ -503,8 +516,8 @@ fn command_run(
             let mut command: Vec<String> = tmp.collect();
             command.insert(0, g);
             command.remove(command.len() - 1);
-            let job = job_handler.create_job(command);
-            job_handler.start_job(job);
+            let job = job_handler.lock().unwrap().create_job(command);
+            job_handler.lock().unwrap().start_job(job);
         }
         _ => {
             if !stdin && !return_string {
@@ -512,17 +525,19 @@ fn command_run(
             } else if !return_string && stdin {
                 run_proccess(tmp, g, true, texter);
             } else if return_string && !stdin {
-                return Some(command_pipe_handler(tmp, g));
+                return async move { Some(command_pipe_handler(tmp, g)) }.boxed();
             }
         }
     }
-    None
+
+    async move { None }.boxed()
 }
-fn main() {
-    let mut job_handler = JobHandler {
+#[tokio::main]
+async fn main() {
+    let mut job_handler = Arc::new(Mutex::new(JobHandler {
         id: 1,
         jobs: Vec::new(),
-    };
+    }));
     loop {
         command_run(
             process_shell(get_shell_input()),
