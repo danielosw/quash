@@ -7,12 +7,6 @@ use std::{
     sync::{Arc, Mutex},
     thread, vec,
 };
-use tokio::{
-    fs::{self as Tfs, read_to_string as Tread_to_string, File as TFile},
-    io::{AsyncRead, AsyncWrite},
-    process::Command as TCommand,
-    sync::Mutex as TMutex,
-};
 #[derive(Clone)]
 struct Job {
     id: i64,
@@ -384,16 +378,13 @@ async fn command_run(
                 } else {
                     command.insert(0, g.clone());
 
-                    let text: std::pin::Pin<
-                        Box<dyn futures::Future<Output = Option<String>> + std::marker::Send>,
-                    > = Box::pin(command_run(
+                    let text = Box::pin(command_run(
                         command.clone().into_iter().collect(),
                         job_handler,
                         true,
                         false,
                         "".to_string(),
-                    ))
-                    .await;
+                    )).await.await;
                     let create_result = File::create(j);
                     let mut towrite = match create_result {
                         Ok(file) => file,
@@ -402,7 +393,7 @@ async fn command_run(
                             return async move { None }.boxed();
                         }
                     };
-                    write!(towrite, "{}", text.await.clone().unwrap()).unwrap();
+                    write!(towrite, "{}", text.clone().unwrap()).unwrap();
                 }
             }
         }
@@ -426,7 +417,7 @@ async fn command_run(
                     };
                     command.insert(0, g.clone());
 
-                    command_run(command.clone(), job_handler, false, true, read);
+                    Box::pin(command_run(command.clone(), job_handler, false, true, read)).await.await;
                 }
             }
         }
@@ -444,24 +435,23 @@ async fn command_run(
                     let pipeto = process_shell(j.to_owned());
                     command.insert(0, g.clone());
                     let value = command.clone();
-                    command_run(
+                    let inner_result = Box::pin(command_run(
+                        value.clone().into_iter().collect(),
+                        job_handler,
+                        true,
+                        false,
+                        "".to_string(),
+                    ))
+                    .await
+                    .await
+                    .unwrap();
+                    Box::pin(command_run(
                         pipeto,
                         &mut job_handler.clone(),
                         false,
                         true,
-                        Box::pin(
-                            command_run(
-                                value.clone().into_iter().collect(),
-                                job_handler,
-                                true,
-                                false,
-                                "".to_string(),
-                            )
-                            .await,
-                        )
-                        .await
-                        .unwrap(),
-                    );
+                        inner_result,
+                    )).await.await;
                 }
             }
         }
@@ -545,6 +535,8 @@ async fn main() {
             false,
             false,
             "".to_string(),
-        );
+        )
+        .await
+        .await;
     }
 }
