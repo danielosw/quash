@@ -4,8 +4,8 @@ use crate::{files_in_folder, substatue};
 
 use std::collections::HashMap;
 
+use parking_lot::Mutex;
 use std::io::Write;
-use std::sync::Mutex;
 use std::{env, vec};
 
 use std::sync::Arc;
@@ -27,13 +27,13 @@ pub(crate) struct JobHandler {
 
 impl Job {
     pub(crate) async fn spawn_job(job_arc: Arc<Mutex<Job>>) {
-        let g = job_arc.lock().unwrap().command.clone()[0].clone();
-        let mut tmp = job_arc.lock().unwrap().command.clone();
+        let g = job_arc.lock().command.clone()[0].clone();
+        let mut tmp = job_arc.lock().command.clone();
         tmp.remove(0);
         let mut job = make_procces_job(tmp.into_iter(), g).await;
-        job_arc.lock().unwrap().pid = job.id().unwrap();
+        job_arc.lock().pid = job.id().unwrap();
         let binding = job_arc.clone();
-        let tmpjob = binding.lock().unwrap();
+        let tmpjob = binding.lock();
         println!(
             "Background job started: [{}] {} {}",
             tmpjob.id,
@@ -43,8 +43,8 @@ impl Job {
         // use tokio jobs
         tokio::spawn(async move {
             job.wait().await.unwrap();
-            *job_arc.lock().unwrap().finished.lock().unwrap() = true;
-            let tmpjob = job_arc.lock().unwrap().clone();
+            *job_arc.lock().finished.lock() = true;
+            let tmpjob = job_arc.lock().clone();
 
             println!(
                 "\nCompleted: [{}] {} {}",
@@ -94,9 +94,9 @@ impl JobHandler {
             .jobs
             .clone()
             .iter()
-            .filter(|x| !*x.1.lock().unwrap().finished.lock().unwrap())
+            .filter(|x| !*x.1.lock().finished.lock())
         {
-            let i = g.1.lock().unwrap();
+            let i = g.1.lock();
             println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(" "));
         }
     }
