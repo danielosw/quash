@@ -1,111 +1,19 @@
 use futures::future::{BoxFuture, FutureExt};
+mod joblib;
 use std::{
+    collections::HashMap,
     env, fs,
     io::{self, Write},
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::Arc,
     vec,
 };
 use tokio::{
     fs::{read_to_string, File},
-    io::{stdout, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     process::Command as TCommand,
     sync::Mutex as AsyncMutex,
 };
-#[derive(Clone)]
-struct Job {
-    id: i64,
-    command: Vec<String>,
-    finished: Arc<Mutex<bool>>,
-    pid: u32,
-}
-#[derive(Clone)]
-
-struct JobHandler {
-    jobs: Vec<Arc<Mutex<Job>>>,
-    id: i64,
-}
-impl Job {
-    async fn spawn_job(job_arc: Arc<Mutex<Job>>) {
-        let g = job_arc.lock().unwrap().command.clone()[0].clone();
-        let mut tmp = job_arc.lock().unwrap().command.clone();
-        tmp.remove(0);
-        let mut job = make_procces_job(tmp.into_iter(), g).await;
-        job_arc.lock().unwrap().pid = job.id().unwrap();
-        let binding = job_arc.clone();
-        let tmpjob = binding.lock().unwrap();
-        println!(
-            "Background job started: [{}] {} {}",
-            tmpjob.id,
-            tmpjob.pid,
-            tmpjob.command.join(" ") + " &"
-        );
-        // use tokio jobs
-        tokio::spawn(async move {
-            job.wait().await.unwrap();
-            *job_arc.lock().unwrap().finished.lock().unwrap() = true;
-            let tmpjob = job_arc.lock().unwrap().clone();
-
-            println!(
-                "\nCompleted: [{}] {} {}",
-                tmpjob.id,
-                tmpjob.pid,
-                tmpjob.command.join(" ") + " &"
-            );
-            // reset the console
-            print!("[QUASH]$ ");
-            // flush stdout to ensure prompt appears
-            io::stdout().flush().unwrap();
-        });
-    }
-}
-impl JobHandler {
-    async fn get_index_by_id(&self, id: i64) -> Option<i64> {
-        let mut counter = 0;
-        // cloning here to prevent borrow issues
-        for g in self.jobs.iter().clone() {
-            let i = g.lock().unwrap();
-            if i.id == id {
-                return Some(counter);
-            } else {
-                counter += 1;
-            }
-        }
-        None
-    }
-
-    async fn create_job(&mut self, command: Vec<String>) -> i64 {
-        // create the new job
-        let new_job = Job {
-            id: self.id,
-            command,
-            finished: Arc::new(Mutex::new(false)),
-            pid: 0,
-        };
-        self.id += 1;
-        let id = new_job.id;
-        self.jobs
-            .insert(self.jobs.len(), Arc::new(Mutex::new(new_job)));
-        id
-    }
-    async fn start_job(&self, id: i64) {
-        let job_index = self.get_index_by_id(id).await;
-        let job_arc =
-            self.jobs[<i64 as TryInto<usize>>::try_into(job_index.unwrap()).unwrap()].clone();
-        Job::spawn_job(job_arc).await;
-    }
-    async fn list_jobs(&self) {
-        for g in self
-            .jobs
-            .clone()
-            .iter()
-            .filter(|x| !*x.lock().unwrap().finished.lock().unwrap())
-        {
-            let i = g.lock().unwrap();
-            println!("[{}] {} {}", i.clone().id, i.pid, i.command.join(" "));
-        }
-    }
-}
 // not async to prevent stdio not properly flushing
 /// Gets the shell input from the user and returns it as a String
 /// # Example
@@ -308,31 +216,7 @@ fn substatue(st: String) -> String {
         h.join("/")
     }
 }
-async fn make_procces_job(tmp: vec::IntoIter<String>, g: String) -> tokio::process::Child {
-    let name = g;
-    let binding = env::var_os("PATH").unwrap();
-    let paths = env::split_paths(&binding);
-    for path in paths {
-        let resulting = files_in_folder(path.clone().to_str().unwrap()).await;
-        if let Some(resulting) = resulting {
-            for file in resulting {
-                if *file.as_ref().unwrap().file_name() == *name {
-                    // check if file is a executable
-                    if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
-                        let process = TCommand::new(file.unwrap().path())
-                            .args(tmp.clone().map(substatue))
-                            .spawn()
-                            .unwrap();
 
-                        return process;
-                    }
-                }
-            }
-        }
-    }
-
-    unreachable!("failed to make process")
-}
 async fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
     let name = g;
     let binding = env::var_os("PATH").unwrap();
@@ -371,7 +255,7 @@ async fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
 
 async fn command_run(
     command: Vec<String>,
-    job_handler: &mut Arc<AsyncMutex<JobHandler>>,
+    job_handler: &mut Arc<AsyncMutex<joblib::JobHandler>>,
     return_string: bool,
     stdin: bool,
     texter: String,
@@ -558,9 +442,9 @@ async fn command_run(
 }
 #[tokio::main]
 async fn main() {
-    let mut job_handler = Arc::new(AsyncMutex::new(JobHandler {
+    let mut job_handler = Arc::new(AsyncMutex::new(joblib::JobHandler {
         id: 1,
-        jobs: Vec::new(),
+        jobs: HashMap::new(),
     }));
     loop {
         command_run(

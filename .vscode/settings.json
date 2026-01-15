@@ -1,0 +1,6 @@
+{
+	"makefile.configureOnOpen": false,
+	"chat.tools.terminal.autoApprove": {
+		"cargo build": true
+	}
+}
