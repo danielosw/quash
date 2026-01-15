@@ -402,7 +402,7 @@ async fn command_run(
                 } else {
                     command.insert(0, g.clone());
 
-                    let text = Box::pin(command_run(
+                    let text: Option<String> = Box::pin(command_run(
                         command.clone().into_iter().collect(),
                         job_handler,
                         true,
@@ -466,7 +466,7 @@ async fn command_run(
                     let pipeto = process_shell(j.to_owned()).await;
                     command.insert(0, g.clone());
                     let value = command.clone();
-                    let inner_result = Box::pin(command_run(
+                    let inner_result: Option<String> = Box::pin(command_run(
                         value.clone().into_iter().collect(),
                         job_handler,
                         true,
@@ -474,14 +474,13 @@ async fn command_run(
                         "".to_string(),
                     ))
                     .await
-                    .await
-                    .unwrap();
+                    .await;
                     Box::pin(command_run(
                         pipeto,
                         &mut job_handler.clone(),
                         false,
                         true,
-                        inner_result,
+                        inner_result.unwrap(),
                     ))
                     .await
                     .await;
