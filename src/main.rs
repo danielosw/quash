@@ -1,7 +1,10 @@
 use futures::future::{BoxFuture, FutureExt};
 use std::{
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     io::{self, Write},
+    path::MAIN_SEPARATOR,
     process::Stdio,
     sync::{Arc, Mutex},
     vec,
@@ -251,6 +254,30 @@ async fn process_shell(buffer: String) -> Vec<String> {
 async fn files_in_folder(path: &str) -> Option<fs::ReadDir> {
     fs::read_dir(path).ok()
 }
+
+/// Checks if a file name matches the given command name.
+/// On Windows, also checks if the file name matches with .exe extension.
+fn matches_executable_name(file_name: &OsStr, command_name: &str) -> bool {
+    if let Some(name_str) = file_name.to_str() {
+        if name_str == command_name {
+            return true;
+        }
+        // On Windows, also check for .exe extension
+        #[cfg(windows)]
+        {
+            let with_exe = format!("{}.exe", command_name);
+            if name_str.eq_ignore_ascii_case(&with_exe) {
+                return true;
+            }
+            // Also match if command already has .exe and file matches
+            if name_str.eq_ignore_ascii_case(command_name) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 async fn run_proccess(tmp: vec::IntoIter<String>, g: String, pipe: bool, stdiner: String) {
     let name = g;
     let binding = env::var_os("PATH").unwrap();
@@ -259,7 +286,7 @@ async fn run_proccess(tmp: vec::IntoIter<String>, g: String, pipe: bool, stdiner
         let resulting = files_in_folder(path.clone().to_str().unwrap()).await;
         if let Some(resulting) = resulting {
             for file in resulting {
-                if *file.as_ref().unwrap().file_name() == *name {
+                if matches_executable_name(&file.as_ref().unwrap().file_name(), &name) {
                     // check if file is a executable
                     if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
                         // finally are we piping
@@ -295,16 +322,24 @@ async fn run_proccess(tmp: vec::IntoIter<String>, g: String, pipe: bool, stdiner
 }
 fn substatue(st: String) -> String {
     let mut s = st;
+    let sep = MAIN_SEPARATOR;
+    let sep_str = sep.to_string();
 
     if !s.contains("$") {
         s
-    } else if !s.contains("/") {
+    } else if !s.contains(sep) && !s.contains('/') {
+        // No path separator, just a variable like $HOME
         s.remove(s.find("$").unwrap()).to_string();
         env::var_os(s).unwrap().into_string().unwrap()
     } else {
-        let g = s.split("/");
-        let h: Vec<_> = g.map(|i| substatue(i.to_string())).collect();
-        h.join("/")
+        // Split by platform separator, or by '/' as fallback for cross-platform paths
+        let parts: Vec<&str> = if s.contains(sep) {
+            s.split(sep).collect()
+        } else {
+            s.split('/').collect()
+        };
+        let h: Vec<_> = parts.iter().map(|i| substatue(i.to_string())).collect();
+        h.join(&sep_str)
     }
 }
 async fn make_procces_job(tmp: vec::IntoIter<String>, g: String) -> tokio::process::Child {
@@ -315,7 +350,7 @@ async fn make_procces_job(tmp: vec::IntoIter<String>, g: String) -> tokio::proce
         let resulting = files_in_folder(path.clone().to_str().unwrap()).await;
         if let Some(resulting) = resulting {
             for file in resulting {
-                if *file.as_ref().unwrap().file_name() == *name {
+                if matches_executable_name(&file.as_ref().unwrap().file_name(), &name) {
                     // check if file is a executable
                     if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
                         let process = TCommand::new(file.unwrap().path())
@@ -341,7 +376,7 @@ async fn command_pipe_handler(tmp: vec::IntoIter<String>, g: String) -> String {
         let resulting = files_in_folder(path.clone().to_str().unwrap()).await;
         if let Some(resulting) = resulting {
             for file in resulting {
-                if *file.as_ref().unwrap().file_name() == *name {
+                if matches_executable_name(&file.as_ref().unwrap().file_name(), &name) {
                     // check if file is a executable
                     if !file.as_ref().unwrap().metadata().unwrap().is_dir() {
                         // finally are we piping
